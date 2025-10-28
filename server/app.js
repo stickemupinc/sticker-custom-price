@@ -10,6 +10,17 @@ import { createTempVariant } from './shopify.js';
 import { handleOrdersCreate, handleCheckoutsUpdate, nightlyCleanup } from './cleanup.js';
 
 const app = express();
+import cors from 'cors';
+
+app.use(cors({
+  origin: [
+    'https://stickemupshop.myshopify.com',
+    'https://p0mfabzpasrjdwhq-79229288684.shopifypreview.com'
+  ],
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type']
+}));
+
 app.use(bodyParser.json());
 
 // ENV required
@@ -71,56 +82,5 @@ app.get('/ops/cleanup', nightlyCleanup);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Custom price app listening on ${PORT}`));
-// --- Auto-create Shopify webhook for order cleanup ---
-import fetch from "node-fetch";
-
-const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN; // e.g. stickemupshop.myshopify.com
-const SHOPIFY_ADMIN_ACCESS_TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN; // your Admin API token
-const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://sticker-custom-price.onrender.com";
-const WEBHOOK_URL = `${PUBLIC_BASE_URL}/webhooks/orders/create`;
-
-async function ensureOrdersWebhook() {
-  try {
-    const res = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/2025-10/webhooks.json`, {
-      headers: { "X-Shopify-Access-Token": SHOPIFY_ADMIN_ACCESS_TOKEN },
-    });
-    const data = await res.json();
-    const exists = (data.webhooks || []).some(
-      (w) => w.topic === "orders/create" && w.address === WEBHOOK_URL
-    );
-
-    if (exists) {
-      console.log("✅ orders/create webhook already exists");
-      return;
-    }
-
-    console.log("⚙️ Creating orders/create webhook...");
-    const createRes = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/2025-10/webhooks.json`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": SHOPIFY_ADMIN_ACCESS_TOKEN,
-      },
-      body: JSON.stringify({
-        webhook: {
-          topic: "orders/create",
-          address: WEBHOOK_URL,
-          format: "json",
-        },
-      }),
-    });
-
-    if (createRes.ok) {
-      console.log("✅ orders/create webhook created successfully");
-    } else {
-      const errorText = await createRes.text();
-      console.error("❌ Failed to create webhook:", createRes.status, errorText);
-    }
-  } catch (err) {
-    console.error("❌ Error ensuring webhook:", err);
-  }
-}
-
-ensureOrdersWebhook();
 
 // -----------------------------------------------------------------------------
