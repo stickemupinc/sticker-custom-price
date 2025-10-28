@@ -15,11 +15,15 @@ import cors from 'cors';
 app.use(cors({
   origin: [
     'https://stickemupshop.myshopify.com',
-    'https://p0mfabzpasrjdwhq-79229288684.shopifypreview.com'
+    'https://p0mfabzpasrjdwhq-79229288684.shopifypreview.com',
+    /\.shopifypreview\.com$/,   // allow any Shopify preview
+    /\.myshopify\.com$/         // allow any myshopify store subdomain
   ],
-  methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type']
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type'],
+  credentials: true
 }));
+
 
 app.use(bodyParser.json());
 
@@ -84,3 +88,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Custom price app listening on ${PORT}`));
 
 // -----------------------------------------------------------------------------
+
