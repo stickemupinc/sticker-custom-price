@@ -1,43 +1,81 @@
-// 2) server/shopify.js
+// -----------------------------------------------------------------------------
+// server/shopify.js
 // -----------------------------------------------------------------------------
 
 import fetch from 'node-fetch';
+import dotenv from 'dotenv';
+dotenv.config();
 
-const ADMIN = `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2024-07`;
-const headers = {
-  'X-Shopify-Access-Token': process.env.SHOPIFY_ADMIN_ACCESS_TOKEN,
-  'Content-Type': 'application/json'
-};
+const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN;
+const SHOPIFY_ADMIN_ACCESS_TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
 
-export async function createTempVariant(productGid, variant) {
-  // REST: POST /products/{product_id}/variants.json
-  const productId = productGid.split('/').pop();
-  const r = await fetch(`${ADMIN}/products/${productId}/variants.json`, {
-    method: 'POST', headers, body: JSON.stringify({ variant })
-  });
-  if (!r.ok) throw new Error(`Create variant failed: ${r.status}`);
-  const data = await r.json();
-  return data.variant; // returns { id, admin_graphql_api_id, ... }
-}
-
-export async function deleteVariant(variantId) {
-  const r = await fetch(`${ADMIN}/variants/${variantId}.json`, { method: 'DELETE', headers });
-  if (!r.ok) throw new Error(`Delete variant failed: ${r.status}`);
-  return true;
-}
-
-export async function getProductVariants(productId) {
-  const r = await fetch(`${ADMIN}/products/${productId}/variants.json?limit=250`, { headers });
-  if (!r.ok) throw new Error('List variants failed');
-  const data = await r.json();
-  return data.variants || [];
-}
-
-export async function listMetafields(ownerId) {
-  const r = await fetch(`${ADMIN}/metafields.json?metafield[owner_id]=${ownerId}`, { headers });
-  if (!r.ok) return [];
-  const data = await r.json();
-  return data.metafields || [];
+if (!SHOPIFY_STORE_DOMAIN || !SHOPIFY_ADMIN_ACCESS_TOKEN) {
+  console.error('❌ Missing Shopify env vars');
 }
 
 // -----------------------------------------------------------------------------
+// Create temporary variant on base product
+// -----------------------------------------------------------------------------
+export async function createTempVariant(productId, variant) {
+  console.log('🧩 createTempVariant payload:', JSON.stringify(variant, null, 2));
+
+  try {
+    const url = `https://${SHOPIFY_STORE_DOMAIN}/admin/api/2024-07/graphql.json`;
+
+    const mutation = `
+      mutation createVariant($input: ProductVariantInput!) {
+        productVariantCreate(input: $input) {
+          productVariant {
+            id
+            sku
+            price
+            title
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    const variables = {
+      input: {
+        productId,
+        price: variant.price,
+        sku: variant.sku,
+        title: variant.options?.[0] || 'Custom Variant',
+        taxable: variant.taxable,
+        inventoryPolicy: variant.inventory_policy,
+        inventoryManagement: variant.inventory_management,
+        metafields: variant.metafields,
+      }
+    };
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Access-Token': SHOPIFY_ADMIN_ACCESS_TOKEN
+      },
+      body: JSON.stringify({ query: mutation, variables })
+    });
+
+    const text = await response.text();
+    console.log('🧩 Shopify response:', text);
+
+    const data = JSON.parse(text);
+    const userErrors = data?.data?.productVariantCreate?.userErrors || [];
+
+    if (userErrors.length > 0) {
+      console.error('❌ Shopify userErrors:', userErrors);
+      throw new Error(userErrors.map(e => e.message).join(', '));
+    }
+
+    return data.data.productVariantCreate.productVariant;
+
+  } catch (err) {
+    console.error('❌ createTempVariant failed:', err);
+    throw err;
+  }
+}
