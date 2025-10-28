@@ -79,3 +79,74 @@ export async function createTempVariant(productId, variant) {
     throw err;
   }
 }
+
+// -----------------------------------------------------------------------------
+// Delete a variant (used by cleanup.js)
+// -----------------------------------------------------------------------------
+export async function deleteVariant(variantId) {
+  try {
+    const url = `https://${SHOPIFY_STORE_DOMAIN}/admin/api/2024-07/graphql.json`;
+    const mutation = `
+      mutation deleteVariant($id: ID!) {
+        productVariantDelete(id: $id) {
+          deletedProductVariantId
+          userErrors { field message }
+        }
+      }
+    `;
+    const variables = { id: variantId };
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Access-Token': SHOPIFY_ADMIN_ACCESS_TOKEN
+      },
+      body: JSON.stringify({ query: mutation, variables })
+    });
+
+    const text = await res.text();
+    console.log('🗑️ deleteVariant response:', text);
+    return text;
+  } catch (err) {
+    console.error('❌ deleteVariant failed:', err);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Get all variants for a product (used by cleanup.js)
+// -----------------------------------------------------------------------------
+export async function getProductVariants(productId) {
+  try {
+    const url = `https://${SHOPIFY_STORE_DOMAIN}/admin/api/2024-07/graphql.json`;
+    const query = `
+      query getProductVariants($id: ID!) {
+        product(id: $id) {
+          variants(first: 50) {
+            nodes {
+              id
+              sku
+              title
+            }
+          }
+        }
+      }
+    `;
+    const variables = { id: productId };
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Access-Token': SHOPIFY_ADMIN_ACCESS_TOKEN
+      },
+      body: JSON.stringify({ query, variables })
+    });
+
+    const text = await res.text();
+    console.log('🧾 getProductVariants response:', text);
+    return JSON.parse(text);
+  } catch (err) {
+    console.error('❌ getProductVariants failed:', err);
+  }
+}
