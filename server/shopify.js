@@ -1,3 +1,8 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
+const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN;
+const SHOPIFY_ADMIN_ACCESS_TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
 // Create temporary variant on base product (REST API)
 export async function createTempVariant(productId, variant) {
   console.log('🧩 createTempVariant payload:', JSON.stringify(variant, null, 2));
@@ -52,3 +57,4 @@ export async function createTempVariant(productId, variant) {
     throw err;
   }
 }
+
