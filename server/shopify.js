@@ -34,14 +34,16 @@ export async function createTempVariant(productId, variant) {
       }
     };
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': SHOPIFY_ADMIN_ACCESS_TOKEN
-      },
-      body: JSON.stringify(body)
-    });
+const response = await fetch(url, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    'X-Shopify-Access-Token': SHOPIFY_ADMIN_ACCESS_TOKEN
+  },
+  body: JSON.stringify(body)
+});
+
 const text = await response.text();
 
 console.log('🧩 Shopify REST status:', response.status, response.statusText);
@@ -108,4 +110,5 @@ export async function getProductVariants(productId) {
     console.error('❌ getProductVariants failed:', err);
   }
 }
+
 
