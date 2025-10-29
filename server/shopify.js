@@ -20,18 +20,19 @@ export async function createTempVariant(productId, variant) {
   console.log('🧩 createTempVariant payload:', JSON.stringify(variant, null, 2));
 
   try {
-    const url = `https://${SHOPIFY_STORE_DOMAIN}/admin/api/2025-01/variants.json`; // note: /variants.json
+   // use the product-scoped endpoint
+const url = `https://${SHOPIFY_STORE_DOMAIN}/admin/api/2025-01/products/${productId}/variants.json`;
 
 const body = {
   variant: {
-    product_id: productId,                              // REQUIRED
-    option1: variant.options?.[0] || 'Custom',          // REQUIRED even if product has “Default Title”
+    // Shopify needs an option value even if the product has "Default Title"
+    option1: variant.options?.[0] || 'Custom',
     price: String(variant.price),
     sku: variant.sku,
     taxable: !!variant.taxable,
     inventory_policy: variant.inventory_policy || 'continue',
-    inventory_management: variant.inventory_management, // or null
-    metafields: variant.metafields
+    inventory_management: variant.inventory_management // can be null
+    // (intentionally omit metafields on create — we’ll add them after it works)
   }
 };
 
@@ -112,6 +113,7 @@ export async function getProductVariants(productId) {
     console.error('❌ getProductVariants failed:', err);
   }
 }
+
 
 
 
