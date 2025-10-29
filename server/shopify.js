@@ -42,17 +42,31 @@ export async function createTempVariant(productId, variant) {
       },
       body: JSON.stringify(body)
     });
+const text = await response.text();
 
-    const text = await response.text();
-    console.log('🧩 Shopify REST response:', text);
+console.log('🧩 Shopify REST status:', response.status, response.statusText);
+console.log('🧩 Shopify REST headers:', JSON.stringify(Object.fromEntries(response.headers.entries()), null, 2));
+console.log('🧩 Shopify REST raw response:', text || '(empty)');
 
-    const data = JSON.parse(text);
-    if (data.errors) {
-      console.error('❌ Shopify returned errors:', data.errors);
-      throw new Error(JSON.stringify(data.errors));
-    }
+if (!text) {
+  throw new Error(`Empty response from Shopify — status ${response.status}`);
+}
 
-    return data.variant || data;
+let data;
+try {
+  data = JSON.parse(text);
+} catch (err) {
+  console.error('❌ JSON parse failed. Raw text was:', text);
+  throw err;
+}
+
+if (data.errors) {
+  console.error('❌ Shopify returned errors:', data.errors);
+  throw new Error(JSON.stringify(data.errors));
+}
+
+return data.variant || data;
+
   } catch (err) {
     console.error('❌ createTempVariant failed:', err);
     throw err;
@@ -94,3 +108,4 @@ export async function getProductVariants(productId) {
     console.error('❌ getProductVariants failed:', err);
   }
 }
+
