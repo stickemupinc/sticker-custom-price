@@ -20,19 +20,21 @@ export async function createTempVariant(productId, variant) {
   console.log('🧩 createTempVariant payload:', JSON.stringify(variant, null, 2));
 
   try {
-    const url = `https://${SHOPIFY_STORE_DOMAIN}/admin/api/2024-07/products/${productId}/variants.json`;
+    const url = `https://${SHOPIFY_STORE_DOMAIN}/admin/api/2025-01/variants.json`; // note: /variants.json
 
-    const body = {
-      variant: {
-        title: variant.options?.[0] || 'Custom Variant',
-        price: variant.price,
-        sku: variant.sku,
-        taxable: variant.taxable,
-        inventory_policy: variant.inventory_policy,
-        inventory_management: variant.inventory_management,
-        metafields: variant.metafields
-      }
-    };
+const body = {
+  variant: {
+    product_id: productId,                              // REQUIRED
+    option1: variant.options?.[0] || 'Custom',          // REQUIRED even if product has “Default Title”
+    price: String(variant.price),
+    sku: variant.sku,
+    taxable: !!variant.taxable,
+    inventory_policy: variant.inventory_policy || 'continue',
+    inventory_management: variant.inventory_management, // or null
+    metafields: variant.metafields
+  }
+};
+
 
 const response = await fetch(url, {
   method: 'POST',
@@ -110,5 +112,6 @@ export async function getProductVariants(productId) {
     console.error('❌ getProductVariants failed:', err);
   }
 }
+
 
 
