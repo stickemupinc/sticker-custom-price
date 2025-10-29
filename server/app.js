@@ -1,41 +1,47 @@
-// 1) server/app.js
+// server/app.js
 // -----------------------------------------------------------------------------
-
-// Install deps: npm i express body-parser node-fetch crypto dotenv
+// Install deps (already in package.json):
+// npm i express body-parser cors crypto dotenv
+// -----------------------------------------------------------------------------
 
 import express from 'express';
 import bodyParser from 'body-parser';
+import cors from 'cors';
 import crypto from 'crypto';
+import dotenv from 'dotenv';
 import { createTempVariant } from './shopify.js';
-import { handleOrdersCreate, handleCheckoutsUpdate, nightlyCleanup } from './cleanup.js';
+
+dotenv.config();
 
 const app = express();
-import cors from 'cors';
 
+// CORS: your store + preview domains
 app.use(cors({
   origin: [
     'https://stickemupshop.myshopify.com',
     'https://p0mfabzpasrjdwhq-79229288684.shopifypreview.com',
-    /\.shopifypreview\.com$/,   // allow any Shopify preview
-    /\.myshopify\.com$/         // allow any myshopify store subdomain
+    /\.shopifypreview\.com$/,
+    /\.myshopify\.com$/
   ],
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type'],
   credentials: true
 }));
 
-
 app.use(bodyParser.json());
 
-// ENV required
-// SHOPIFY_STORE_DOMAIN=your-store.myshopify.com
-// SHOPIFY_ADMIN_ACCESS_TOKEN=shpat_...
-// HOST_PRODUCT_ID=gid://shopify/Product/1234567890  OR  numeric ID (we normalize)
-// CLEANUP_TTL_HOURS=48  (how long to keep temp variants if not purchased)
+// ENV needed:
+// - SHOPIFY_STORE_DOMAIN=stickemupshop.myshopify.com
+// - SHOPIFY_ADMIN_ACCESS_TOKEN=shpat_...
+// - HOST_PRODUCT_ID=9055083823340   <-- USE NUMERIC ID (not a gid)
 
-function normalizeGid(id) {
-  return String(id).startsWith('gid://') ? id : `gid://shopify/Product/${id}`;
+function requireEnv(name) {
+  const v = process.env[name];
+  if (!v) console.error(`❌ Missing env: ${name}`);
+  return v;
 }
+
+app.get('/health', (_req, res) => res.json({ ok: true }));
 
 app.post('/api/custom-sticker', async (req, res) => {
   try {
@@ -46,10 +52,14 @@ app.post('/api/custom-sticker', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: price, qty, width, height, vinyl' });
     }
 
+    // Build stable-ish SKU for traceability
     const nowIso = new Date().toISOString();
-    const hash = crypto.createHash('sha1').update(`${vinyl}|${finish}|${width}|${height}|${qty}|${price}|${nowIso}`).digest('hex').slice(0, 10);
+    const hash = crypto
+      .createHash('sha1')
+      .update(`${vinyl}|${finish}|${width}|${height}|${qty}|${price}|${nowIso}`)
+      .digest('hex')
+      .slice(0, 10);
 
-    // Build variant payload
     const variant = {
       options: [ `${width}x${height} in · ${qty} qty` ],
       price: Number(price).toFixed(2),
@@ -58,34 +68,30 @@ app.post('/api/custom-sticker', async (req, res) => {
       weight: 0,
       requires_shipping: true,
       inventory_management: null,
-      inventory_policy: 'continue',
-      metafields: [
-        { namespace: 'custom', key: 'ephemeral', type: 'boolean', value: 'true' },
-        { namespace: 'custom', key: 'hash', type: 'single_line_text_field', value: hash },
-        { namespace: 'custom', key: 'expires_at', type: 'single_line_text_field', value: new Date(Date.now() + (Number(process.env.CLEANUP_TTL_HOURS || 48) * 3600 * 1000)).toISOString() },
-        { namespace: 'custom', key: 'config', type: 'json', value: JSON.stringify({ title, price, width, height, qty, finish, vinyl }) },
-      ]
+      inventory_policy: 'continue'
+      // (metafields will be added later after create succeeds)
     };
 
-    const productId = normalizeGid(process.env.HOST_PRODUCT_ID);
-    const created = await createTempVariant(productId, variant);
+    const productIdRaw = requireEnv('HOST_PRODUCT_ID');
+    const productIdNum = Number(String(productIdRaw).replace(/\D/g, '')); // ensure numeric
+    if (!productIdNum) {
+      return res.status(500).json({ error: 'HOST_PRODUCT_ID must be a numeric product ID' });
+    }
 
-    return res.json({ variant_id: created.id, gid: created.admin_graphql_api_id, sku: created.sku });
+    const created = await createTempVariant(productIdNum, variant);
+
+    // Respond with the new variant id for /cart/add.js
+    return res.json({
+      variant_id: created?.id,
+      sku: created?.sku || variant.sku
+    });
   } catch (err) {
-    console.error(err);
+    console.error('❌ /api/custom-sticker failed:', err);
     return res.status(500).json({ error: 'Server error creating custom variant' });
   }
 });
 
-// Webhooks (optional but recommended)
-app.post('/webhooks/orders/create', handleOrdersCreate);
-app.post('/webhooks/checkouts/update', handleCheckoutsUpdate);
-
-// Nightly cleanup (attach to your scheduler)
-app.get('/ops/cleanup', nightlyCleanup);
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Custom price app listening on ${PORT}`));
-
-// -----------------------------------------------------------------------------
-
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`Custom price app listening on ${PORT}`);
+});
