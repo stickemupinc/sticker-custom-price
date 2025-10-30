@@ -13,33 +13,33 @@ if (!SHOPIFY_STORE_DOMAIN || !SHOPIFY_ADMIN_ACCESS_TOKEN) {
   console.error('❌ Missing Shopify env vars SHOPIFY_STORE_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN');
 }
 
-// Helpers
 function adminUrl(path) {
-  // lock to the API version you already saw in response headers
   return `https://${SHOPIFY_STORE_DOMAIN}/admin/api/2025-01${path}`;
 }
 
-async function jsonOrThrow(res) {
+async function jsonOrThrow(res, context = '') {
   const text = await res.text();
   if (!text) {
-    throw new Error(`Empty response from Shopify — status ${res.status}`);
+    throw new Error(`Empty response from Shopify — status ${res.status}${context ? ` (${context})` : ''}`);
   }
   let data;
   try { data = JSON.parse(text); }
-  catch (e) { console.error('❌ JSON parse failed. Raw text:', text); throw e; }
-
+  catch (e) {
+    console.error('❌ JSON parse failed', { context, status: res.status, text });
+    throw e;
+  }
   if (!res.ok || data?.errors) {
-    console.error('❌ Shopify returned errors:', data?.errors || text);
+    console.error('❌ Shopify returned errors:', data?.errors || text, { context, status: res.status });
     throw new Error(typeof data?.errors === 'string' ? JSON.stringify(data.errors) : 'Shopify error');
   }
   return data;
 }
 
 // -----------------------------------------------------------------------------
-// Create variant, then add metafields to it
+// Create variant, then add metafields to it (nested endpoint)
 // -----------------------------------------------------------------------------
 export async function createTempVariant(productId, variant, meta) {
-  // 1) create the variant
+  // 1) Create the variant
   const createRes = await fetch(adminUrl('/variants.json'), {
     method: 'POST',
     headers: {
@@ -62,9 +62,9 @@ export async function createTempVariant(productId, variant, meta) {
     }),
   });
 
-  const created = (await jsonOrThrow(createRes)).variant; // { id, ... }
+  const created = (await jsonOrThrow(createRes, 'createVariant')).variant; // { id, ... }
 
-  // 2) add metafields (owner_resource=variant)
+  // 2) Add metafields via nested endpoint
   if (meta && created?.id) {
     const metas = [
       { namespace: 'custom', key: 'ephemeral',  type: 'boolean',               value: String(!!meta.ephemeral) },
@@ -74,23 +74,17 @@ export async function createTempVariant(productId, variant, meta) {
     ];
 
     for (const m of metas) {
-      // POST /admin/api/2025-01/metafields.json with owner fields
-      const mfRes = await fetch(adminUrl('/metafields.json'), {
+      const path = `/variants/${created.id}/metafields.json`;
+      const mfRes = await fetch(adminUrl(path), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
           'X-Shopify-Access-Token': SHOPIFY_ADMIN_ACCESS_TOKEN,
         },
-        body: JSON.stringify({
-          metafield: {
-            ...m,
-            owner_resource: 'variant',
-            owner_id: created.id,
-          },
-        }),
+        body: JSON.stringify({ metafield: m }),
       });
-      await jsonOrThrow(mfRes); // throws if any single metafield fails
+      await jsonOrThrow(mfRes, `metafield ${m.namespace}.${m.key}`);
     }
   }
 
@@ -98,7 +92,7 @@ export async function createTempVariant(productId, variant, meta) {
 }
 
 // -----------------------------------------------------------------------------
-// (Optional) utilities for manual cleanup
+// Utilities (optional)
 // -----------------------------------------------------------------------------
 export async function deleteVariant(variantId) {
   const res = await fetch(adminUrl(`/variants/${variantId}.json`), {
@@ -110,7 +104,10 @@ export async function deleteVariant(variantId) {
 
 export async function getProductVariants(productId) {
   const res = await fetch(adminUrl(`/products/${productId}/variants.json`), {
-    headers: { 'X-Shopify-Access-Token': SHOPIFY_ADMIN_ACCESS_TOKEN, 'Accept':'application/json' },
+    headers: {
+      'X-Shopify-Access-Token': SHOPIFY_ADMIN_ACCESS_TOKEN,
+      'Accept': 'application/json',
+    },
   });
-  return jsonOrThrow(res); // → { variants: [...] }
+  return jsonOrThrow(res, 'getProductVariants'); // → { variants: [...] }
 }
