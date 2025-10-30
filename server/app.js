@@ -1,7 +1,7 @@
 // server/app.js
 // -----------------------------------------------------------------------------
-// Install deps in package.json:
-//   express body-parser cors crypto dotenv node-fetch
+// Install deps (already in package.json):
+// npm i express body-parser cors crypto dotenv
 // -----------------------------------------------------------------------------
 
 import express from 'express';
@@ -10,13 +10,13 @@ import cors from 'cors';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { createTempVariant } from './shopify.js';
-import { registerCleanupRoutes } from './cleanup.js';
+import { nightlyCleanup } from './cleanup.js'; // ✅ bring cleanup route back
 
 dotenv.config();
 
 const app = express();
 
-// CORS: your store + preview
+// CORS: your store + preview domains
 app.use(cors({
   origin: [
     'https://stickemupshop.myshopify.com',
@@ -31,6 +31,11 @@ app.use(cors({
 
 app.use(bodyParser.json());
 
+// ENV needed:
+// - SHOPIFY_STORE_DOMAIN=stickemupshop.myshopify.com
+// - SHOPIFY_ADMIN_ACCESS_TOKEN=shpat_...
+// - HOST_PRODUCT_ID=9055083823340   <-- numeric ID (not gid)
+
 function requireEnv(name) {
   const v = process.env[name];
   if (!v) console.error(`❌ Missing env: ${name}`);
@@ -39,17 +44,19 @@ function requireEnv(name) {
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-// Create temp variant for the hidden host product
 app.post('/api/custom-sticker', async (req, res) => {
   try {
     const { title, price, width, height, qty, finish, vinyl, skuPrefix = 'CUST' } = req.body || {};
 
+    // Basic validation
     if (!price || !qty || !width || !height || !vinyl) {
       return res.status(400).json({ error: 'Missing required fields: price, qty, width, height, vinyl' });
     }
 
+    // Build SKU hash
     const nowIso = new Date().toISOString();
-    const hash = crypto.createHash('sha1')
+    const hash = crypto
+      .createHash('sha1')
       .update(`${vinyl}|${finish}|${width}|${height}|${qty}|${price}|${nowIso}`)
       .digest('hex')
       .slice(0, 10);
@@ -63,10 +70,11 @@ app.post('/api/custom-sticker', async (req, res) => {
       requires_shipping: true,
       inventory_management: null,
       inventory_policy: 'continue'
+      // metafields are set after create (in shopify.js) if needed
     };
 
     const productIdRaw = requireEnv('HOST_PRODUCT_ID');
-    const productIdNum = Number(String(productIdRaw).replace(/\D/g, '')); // numeric only
+    const productIdNum = Number(String(productIdRaw).replace(/\D/g, '')); // ensure numeric
     if (!productIdNum) {
       return res.status(500).json({ error: 'HOST_PRODUCT_ID must be a numeric product ID' });
     }
@@ -84,8 +92,8 @@ app.post('/api/custom-sticker', async (req, res) => {
   }
 });
 
-// Register manual cleanup route
-registerCleanupRoutes(app);
+// ✅ Cleanup endpoint (GET /ops/cleanup?dry_run=1|0&ttl_hours=168)
+app.get('/ops/cleanup', nightlyCleanup);
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
