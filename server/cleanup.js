@@ -1,53 +1,112 @@
-// 3) server/cleanup.js
+// server/cleanup.js
+// -----------------------------------------------------------------------------
+// Manual cleanup of temp variants created by the calculator.
+// Deletes variants on your hidden host product whose SKUs start with "CUST-"
+// and are older than TTL_HOURS (default 48h).
+//
+// Usage (safe preview / dry-run):
+//   GET /ops/cleanup-manual
+//   GET /ops/cleanup-manual?dry=1   (default)
+// To actually delete:
+//   GET /ops/cleanup-manual?dry=0
 // -----------------------------------------------------------------------------
 
-import { deleteVariant, getProductVariants } from './shopify.js';
+import fetch from 'node-fetch';
+import dotenv from 'dotenv';
+dotenv.config();
 
-// On order creation: mark variants that were purchased. (Optional: delete immediately.)
-export async function handleOrdersCreate(req, res) {
-  try {
-    const order = req.body;
-    // Extract SKUs matching our skuPrefix and mark them for immediate deletion
-    const tempVariantIds = (order.line_items || [])
-      .filter(li => (li.sku || '').startsWith('CUST-'))
-      .map(li => li.variant_id)
-      .filter(Boolean);
+const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN;
+const SHOPIFY_ADMIN_ACCESS_TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+const HOST_PRODUCT_ID_RAW = process.env.HOST_PRODUCT_ID;
+const TTL_HOURS = Number(process.env.CLEANUP_TTL_HOURS || 48);
 
-    for (const id of tempVariantIds) {
-      try { await deleteVariant(id); } catch (e) { console.warn('Delete after order failed', id, e.message); }
-    }
-    res.status(200).send('ok');
-  } catch (e) {
-    res.status(200).send('ok');
+// Ensure numeric product id
+const HOST_PRODUCT_ID = Number(String(HOST_PRODUCT_ID_RAW || '').replace(/\D/g, '') || 0);
+
+function requireEnv(name, val) {
+  if (!val) throw new Error(`Missing env: ${name}`);
+}
+
+requireEnv('SHOPIFY_STORE_DOMAIN', SHOPIFY_STORE_DOMAIN);
+requireEnv('SHOPIFY_ADMIN_ACCESS_TOKEN', SHOPIFY_ADMIN_ACCESS_TOKEN);
+requireEnv('HOST_PRODUCT_ID', HOST_PRODUCT_ID);
+
+async function listAllVariants(productId) {
+  // Admin REST: GET /products/{product_id}/variants.json (may need pagination)
+  const url = `https://${SHOPIFY_STORE_DOMAIN}/admin/api/2025-01/products/${productId}/variants.json?limit=250`;
+  const headers = {
+    'X-Shopify-Access-Token': SHOPIFY_ADMIN_ACCESS_TOKEN,
+    'Accept': 'application/json'
+  };
+  const res = await fetch(url, { headers });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`listAllVariants failed: ${res.status} ${res.statusText} ${text}`);
   }
+  const data = JSON.parse(text);
+  return data.variants || [];
 }
 
-// On checkout updates (abandoned carts): optional logging/flagging
-export async function handleCheckoutsUpdate(req, res) {
-  // You may store checkout tokens and temp SKUs here to help later cleanup
-  res.status(200).send('ok');
+async function deleteVariant(variantId) {
+  const url = `https://${SHOPIFY_STORE_DOMAIN}/admin/api/2025-01/variants/${variantId}.json`;
+  const headers = {
+    'X-Shopify-Access-Token': SHOPIFY_ADMIN_ACCESS_TOKEN,
+    'Accept': 'application/json'
+  };
+  const res = await fetch(url, { method: 'DELETE', headers });
+  return res.status;
 }
 
-// Nightly cleanup: remove stale temp variants whose expires_at is in the past
-export async function nightlyCleanup(req, res) {
-  try {
-    const productId = (process.env.HOST_PRODUCT_ID || '').toString().split('/').pop();
-    const variants = await getProductVariants(productId);
-    const now = Date.now();
+function hoursBetween(aIso, bIso) {
+  const a = new Date(aIso).getTime();
+  const b = new Date(bIso).getTime();
+  return (b - a) / (1000 * 3600);
+}
 
-    // Lightweight heuristic: delete variants with SKU prefix CUST- older than TTL
-    const deletions = [];
-    for (const v of variants) {
-      const created = new Date(v.created_at).getTime();
-      const ageHrs = (now - created) / 3600000;
-      if ((v.sku || '').startsWith('CUST-') && ageHrs > Number(process.env.CLEANUP_TTL_HOURS || 48)) {
-        try { await deleteVariant(v.id); deletions.push(v.id); } catch (_) {}
+export function registerCleanupRoutes(app) {
+  app.get('/ops/cleanup-manual', async (req, res) => {
+    const dry = (req.query.dry ?? '1') !== '0'; // default dry-run
+    try {
+      const variants = await listAllVariants(HOST_PRODUCT_ID);
+
+      const nowIso = new Date().toISOString();
+      const toDelete = [];
+      for (const v of variants) {
+        const isTemp = typeof v.sku === 'string' && v.sku.startsWith('CUST-');
+        const ageH = hoursBetween(v.created_at, nowIso);
+        const oldEnough = ageH >= TTL_HOURS;
+
+        if (isTemp && oldEnough) {
+          toDelete.push({
+            id: v.id,
+            sku: v.sku,
+            title: v.title,
+            created_at: v.created_at,
+            age_hours: Math.round(ageH)
+          });
+        }
       }
-    }
-    res.json({ deleted: deletions.length });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-}
 
-// -----------------------------------------------------------------------------
+      const results = [];
+      if (!dry) {
+        for (const t of toDelete) {
+          const status = await deleteVariant(t.id);
+          results.push({ ...t, deleted: status === 200 || status === 204, status });
+        }
+      }
+
+      return res.json({
+        ok: true,
+        dry_run: dry,
+        host_product_id: HOST_PRODUCT_ID,
+        ttl_hours: TTL_HOURS,
+        total_variants: variants.length,
+        candidates: toDelete.length,
+        ...(dry ? { preview: toDelete } : { deleted: results })
+      });
+    } catch (err) {
+      console.error('❌ cleanup-manual failed:', err);
+      return res.status(500).json({ ok: false, error: String(err) });
+    }
+  });
+}
