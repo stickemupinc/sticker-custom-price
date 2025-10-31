@@ -71,7 +71,7 @@ export async function createTempVariant(productId, variant, meta = {}) {
     productId: pid,
   });
 
-  // Minimal variant payload (same fields for both attempts)
+  // Minimal variant payload (must have a UNIQUE option1 or Shopify will 422)
   const variantBody = {
     price: variant.price,
     sku: variant.sku,
@@ -80,8 +80,8 @@ export async function createTempVariant(productId, variant, meta = {}) {
     inventory_management: variant.inventory_management ?? null,
     requires_shipping: !!variant.requires_shipping,
     grams: 0,
-    // 👉 Force "Default Title" so cart won't show an extra line under product name
-    option1: 'Default Title'
+    // keep a unique subtitle (we'll hide it in the cart via Liquid)
+    option1: variant?.options?.[0] || `Custom ${Date.now()}`
   };
 
   // 1) Preferred: product-scoped endpoint
@@ -92,7 +92,6 @@ export async function createTempVariant(productId, variant, meta = {}) {
     const data1 = await postJson(url1, body1, 'createVariant(product-scoped)');
     created = data1.variant;
   } catch (e) {
-    // Only fallback on 404 (Not Found). Otherwise, surface the error.
     const msg = String(e.message || e);
     if (!/not found/i.test(msg) && !/404/.test(msg)) {
       throw e;
@@ -105,7 +104,7 @@ export async function createTempVariant(productId, variant, meta = {}) {
     created = data2.variant;
   }
 
-  // 2) Add metafields on the variant via nested endpoint (most reliable)
+  // 2) Variant metafields (best-effort)
   if (created?.id) {
     const metas = [
       { namespace: 'custom', key: 'ephemeral',  type: 'boolean',               value: String(!!meta.ephemeral) },
@@ -115,15 +114,12 @@ export async function createTempVariant(productId, variant, meta = {}) {
     ];
 
     for (const m of metas) {
-      // Skip empty values to avoid 422s
       if (m.value === '' || m.value === 'null' || m.value === 'undefined') continue;
-
       const mfUrl = adminUrl(`/variants/${created.id}/metafields.json`);
       try {
         await postJson(mfUrl, { metafield: m }, `metafield ${m.namespace}.${m.key}`);
       } catch (err) {
         console.error('❌ Metafield create failed:', m, err.message || err);
-        // Non-fatal: keep the variant even if a metafield fails
       }
     }
   }
