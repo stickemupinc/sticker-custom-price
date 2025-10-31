@@ -64,7 +64,7 @@ export async function createTempVariant(productId, variant, meta = {}) {
     throw new Error(`productId is not numeric: ${productId}`);
   }
 
-  // Log basic env so we can verify we're hitting the right shop
+  // Log basics so we can verify we're hitting the right shop
   console.log('🛠️  createTempVariant env:', {
     SHOPIFY_STORE_DOMAIN,
     token_last4: last4(SHOPIFY_ADMIN_ACCESS_TOKEN),
@@ -80,7 +80,8 @@ export async function createTempVariant(productId, variant, meta = {}) {
     inventory_management: variant.inventory_management ?? null,
     requires_shipping: !!variant.requires_shipping,
     grams: 0,
-    option1: variant.options?.[0] || 'Custom',
+    // 👉 Force "Default Title" so cart won't show an extra line under product name
+    option1: 'Default Title'
   };
 
   // 1) Preferred: product-scoped endpoint
@@ -131,7 +132,7 @@ export async function createTempVariant(productId, variant, meta = {}) {
 }
 
 // -----------------------------------------------------------------------------
-// Helpers (optional)
+// Helpers
 // -----------------------------------------------------------------------------
 export async function deleteVariant(variantId) {
   const res = await fetch(adminUrl(`/variants/${variantId}.json`), {
