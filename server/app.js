@@ -9,27 +9,21 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 1. CRITICAL: CORS must be valid.
-// Allowing all origins for simplicity (User is non-technical).
+// CORS: Allow everything for simplicity
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Pre-flight handling
 app.options('*', cors());
-
 app.use(bodyParser.json());
 
-// ENV CHECK
-const SHOP = process.env.SHOPIFY_STORE_DOMAIN; // e.g. stickemupshop.myshopify.com
+const SHOP = process.env.SHOPIFY_STORE_DOMAIN;
 const TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
 
-// --- ROUTES ---
-
 app.get('/', (req, res) => {
-    res.send('Sticker Calculator Backend is Running v2.');
+    res.send('Sticker Calculator Backend - Guest Checkout Fix');
 });
 
 app.post('/api/create-checkout', async (req, res) => {
@@ -45,23 +39,12 @@ app.post('/api/create-checkout', async (req, res) => {
         return res.status(400).json({ error: 'No items in cart' });
     }
 
-    // Transform Cart Items -> Draft Order Line Items
+    // Transform Cart Items for Draft Order
     const line_items = items.map(item => {
-        // 1. Check for Custom Price Property
-        // Frontend sends properties['_RealPrice'] or similar.
-        // Note: Line Item properties come in as an object in the payload usually, 
-        // or array depending on how cart.js formats it. 
-        // Usually item.properties is an object { "Shape": "Diecut", "_RealPrice": "12.50" }
-
         let customPrice = null;
         if (item.properties && item.properties['_RealPrice']) {
             customPrice = item.properties['_RealPrice'];
         }
-
-        // Default to item price if no custom price found (fallback)
-        // Shopify cart item.price is in cents usually? No, cart.js returns cents.
-        // Draft Order API expects string "12.50".
-
         const finalPrice = customPrice ? customPrice : (item.price / 100).toFixed(2);
 
         return {
@@ -73,10 +56,13 @@ app.post('/api/create-checkout', async (req, res) => {
     });
 
     try {
+        // BUG FIX: Removed 'use_customer_default_address: true'
+        // That flag requires a customer_id, which we don't have for guests.
         const draftOrderPayload = {
             draft_order: {
                 line_items: line_items,
-                use_customer_default_address: true
+                // Optional: Adding tags to identify these orders
+                tags: "Custom Calculator Order"
             }
         };
 
@@ -95,10 +81,11 @@ app.post('/api/create-checkout', async (req, res) => {
 
         if (!response.ok) {
             console.error("Shopify API Error:", data);
-            return res.status(500).json({ error: 'Shopify Refused Order', details: data });
+            // Better error message for user
+            const msg = data.errors ? JSON.stringify(data.errors) : 'Unknown Shopify Error';
+            return res.status(500).json({ error: 'Shopify Refused Order', details: msg });
         }
 
-        // Success! Return the invoice URL (The secure checkout link)
         console.log("✅ Order Created:", data.draft_order.invoice_url);
         return res.json({ invoice_url: data.draft_order.invoice_url });
 
